@@ -56,11 +56,11 @@ type pkiHeader struct {
 	Recipient     asn1.RawValue // GeneralName
 	MessageTime   asn1.RawValue `asn1:"optional,explicit,tag:0"`
 	ProtectionAlg asn1.RawValue `asn1:"optional,explicit,tag:1"`
-	SenderKID     asn1.RawValue `asn1:"optional,explicit,tag:2"`
-	RecipKID      asn1.RawValue `asn1:"optional,explicit,tag:3"`
-	TransactionID asn1.RawValue `asn1:"optional,explicit,tag:4"`
-	SenderNonce   asn1.RawValue `asn1:"optional,explicit,tag:5"`
-	RecipNonce    asn1.RawValue `asn1:"optional,explicit,tag:6"`
+	SenderKID     []byte        `asn1:"optional,explicit,tag:2"`
+	RecipKID      []byte        `asn1:"optional,explicit,tag:3"`
+	TransactionID []byte        `asn1:"optional,explicit,tag:4"`
+	SenderNonce   []byte        `asn1:"optional,explicit,tag:5"`
+	RecipNonce    []byte        `asn1:"optional,explicit,tag:6"`
 	FreeText      asn1.RawValue `asn1:"optional,explicit,tag:7"`
 	GeneralInfo   asn1.RawValue `asn1:"optional,explicit,tag:8"`
 }

@@ -178,11 +178,11 @@ func extractCertFromResponse(t *testing.T, data []byte) *x509.Certificate {
 		Recipient     asn1.RawValue
 		MessageTime   asn1.RawValue `asn1:"optional,explicit,tag:0"`
 		ProtectionAlg asn1.RawValue `asn1:"optional,explicit,tag:1"`
-		SenderKID     asn1.RawValue `asn1:"optional,explicit,tag:2"`
-		RecipKID      asn1.RawValue `asn1:"optional,explicit,tag:3"`
-		TransactionID asn1.RawValue `asn1:"optional,explicit,tag:4"`
-		SenderNonce   asn1.RawValue `asn1:"optional,explicit,tag:5"`
-		RecipNonce    asn1.RawValue `asn1:"optional,explicit,tag:6"`
+		SenderKID     []byte        `asn1:"optional,explicit,tag:2"`
+		RecipKID      []byte        `asn1:"optional,explicit,tag:3"`
+		TransactionID []byte        `asn1:"optional,explicit,tag:4"`
+		SenderNonce   []byte        `asn1:"optional,explicit,tag:5"`
+		RecipNonce    []byte        `asn1:"optional,explicit,tag:6"`
 	}
 	type respMsg struct {
 		Header respHeader

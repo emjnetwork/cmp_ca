@@ -314,16 +314,8 @@ func (h *Handler) buildPKIMessage(req pkiMessage, bodyTag int, responses []certR
 	}
 
 	// --- SenderNonce (fresh random 16 bytes) ---
-	nonceBytes := make([]byte, 16)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		return nil, err
-	}
-	nonceDER, err := asn1.Marshal(nonceBytes)
-	if err != nil {
-		return nil, err
-	}
-	var senderNonce asn1.RawValue
-	if _, err := asn1.Unmarshal(nonceDER, &senderNonce); err != nil {
+	senderNonce := make([]byte, 16)
+	if _, err := rand.Read(senderNonce); err != nil {
 		return nil, err
 	}
 
