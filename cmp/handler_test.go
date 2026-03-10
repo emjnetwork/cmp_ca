@@ -9,6 +9,7 @@ import (
 	"encoding/asn1"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/Edu171002/cmp_ca/ca"
@@ -119,34 +120,40 @@ func buildCertReqMessage(t *testing.T, pub *rsa.PublicKey, subject pkix.Name, bo
 	}
 
 	// Minimal PKIHeader: pvno + dummy sender + dummy recipient.
-	nullName := asn1.RawValue{Tag: asn1.TagNull}
+
+	//transactionID := make([]byte, 16)
+	//rand.Read(transactionID)
+	//tidDER, _ := asn1.Marshal(transactionID)
+	//var rawTID asn1.RawValue
+	//asn1.Unmarshal(tidDER, &rawTID)
 
 	transactionID := make([]byte, 16)
 	rand.Read(transactionID)
-	tidDER, _ := asn1.Marshal(transactionID)
-	var rawTID asn1.RawValue
-	asn1.Unmarshal(tidDER, &rawTID)
 
 	senderNonce := make([]byte, 16)
 	rand.Read(senderNonce)
-	snDER, _ := asn1.Marshal(senderNonce)
-	var rawSN asn1.RawValue
-	asn1.Unmarshal(snDER, &rawSN)
+
+	emptyDN := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      []byte{0x30, 0x00},
+	}
 
 	type headerType struct {
 		PVNO          int
-		Sender        asn1.RawValue
-		Recipient     asn1.RawValue
-		TransactionID asn1.RawValue `asn1:"optional,explicit,tag:4"`
-		SenderNonce   asn1.RawValue `asn1:"optional,explicit,tag:5"`
+		Sender        asn1.RawValue `asn1:"omitempty"`
+		Recipient     asn1.RawValue `asn1:"omitempty"`
+		TransactionID []byte        `asn1:"optional,explicit,tag:4"`
+		SenderNonce   []byte        `asn1:"optional,explicit,tag:5"`
 	}
 
 	header := headerType{
 		PVNO:          2,
-		Sender:        nullName,
-		Recipient:     nullName,
-		TransactionID: rawTID,
-		SenderNonce:   rawSN,
+		Sender:        emptyDN,
+		Recipient:     emptyDN,
+		TransactionID: transactionID,
+		SenderNonce:   senderNonce,
 	}
 
 	type msgType struct {
@@ -191,7 +198,7 @@ func extractCertFromResponse(t *testing.T, data []byte) *x509.Certificate {
 	// CAPubs is pre-encoded as [1] CONSTRUCTED in the handler (RawValues carry their
 	// own Class/Tag), so read it without an explicit-tag struct constraint.
 	type certRepRaw struct {
-		CAPubs   asn1.RawValue  `asn1:"optional"`
+		CAPubs   asn1.RawValue `asn1:"optional"`
 		Response []asn1.RawValue
 	}
 	var certRep certRepRaw
@@ -288,6 +295,9 @@ func TestHandlerIR(t *testing.T) {
 
 	reqDER := buildIRMessage(t, &key.PublicKey, pkix.Name{CommonName: "ir.example.com"})
 
+	//Dump
+	os.WriteFile("ir.der", reqDER, 0644)
+
 	resp, err := http.Post(srv.URL, "application/pkixcmp", bytes.NewReader(reqDER))
 	if err != nil {
 		t.Fatal(err)
@@ -312,6 +322,9 @@ func TestHandlerIR(t *testing.T) {
 	if _, err := cert.Verify(x509.VerifyOptions{Roots: h.CA.CertPool()}); err != nil {
 		t.Errorf("certificate verification failed: %v", err)
 	}
+
+	//Dump
+	os.WriteFile("ip.der", respDER.Bytes(), 0644)
 }
 
 func TestHandlerKUR(t *testing.T) {

@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	cmp_ca [-addr :8080]
+//	cmp_ca [-addr :8085]
 package main
 
 import (
@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", ":8085", "listen address")
 	flag.Parse()
 
 	c, err := ca.New()
@@ -30,7 +30,7 @@ func main() {
 	fmt.Printf("CMP Debug CA ready\n")
 	fmt.Printf("CA subject : %s\n", c.Certificate.Subject.CommonName)
 	fmt.Printf("CA serial  : %s\n", c.Certificate.SerialNumber)
-	fmt.Printf("Listening  : http://%s\n", *addr)
+	fmt.Printf("Listening  : http://localhost%s\n", *addr)
 	fmt.Printf("\nCA certificate (PEM):\n%s\n", c.CertPEM())
 
 	h := &cmp.Handler{CA: c}
