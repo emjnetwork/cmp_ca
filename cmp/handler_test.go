@@ -14,6 +14,7 @@ import (
 
 	"github.com/Edu171002/cmp_ca/ca"
 	"github.com/Edu171002/cmp_ca/cmp"
+	gocmp "github.com/zjj/gocmp/cmp"
 )
 
 // newTestHandler creates a Handler backed by a fresh CA for use in tests.
@@ -41,74 +42,37 @@ func buildKURMessage(t *testing.T, pub *rsa.PublicKey, subject pkix.Name) []byte
 }
 
 // buildCertReqMessage is the shared builder for IR and KUR messages.
+// It uses github.com/zjj/gocmp/cmp types to construct the CertTemplate,
+// CertRequest, and CertReqMessage, and then wraps them in the appropriate
+// PKIBody CHOICE context tag.
 func buildCertReqMessage(t *testing.T, pub *rsa.PublicKey, subject pkix.Name, bodyTag int) []byte {
 	t.Helper()
 
-	// Encode the public key as SubjectPublicKeyInfo.
+	// Encode the public key as SubjectPublicKeyInfo DER.
 	spkiDER, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
 	}
 
-	// Build CertTemplate with subject [5] and publicKey [6] (EXPLICIT context tags).
-	// With CMP EXPLICIT TAGS default, [N] EXPLICIT { T } means:
-	//   outer [N] CONSTRUCTED wrapper, Bytes = full DER of T (including T's own tag+length).
-	subjectDER, err := asn1.Marshal(subject.ToRDNSequence())
-	if err != nil {
-		t.Fatalf("marshal subject: %v", err)
-	}
-	subjectField := asn1.RawValue{
-		Class:      asn1.ClassContextSpecific,
-		Tag:        5,
-		IsCompound: true,
-		Bytes:      subjectDER, // full Name SEQUENCE DER
+	// Build CertTemplate using gocmp types.
+	tmpl := gocmp.NewCertTemplate(nil)
+	tmpl.SetSubject(subject.ToRDNSequence())
+	if err := tmpl.SetPublicKeyWithRawPublicKeyInfo(spkiDER); err != nil {
+		t.Fatalf("SetPublicKeyWithRawPublicKeyInfo: %v", err)
 	}
 
-	pubKeyField := asn1.RawValue{
-		Class:      asn1.ClassContextSpecific,
-		Tag:        6,
-		IsCompound: true,
-		Bytes:      spkiDER, // full SubjectPublicKeyInfo SEQUENCE DER
+	// Build CertRequest and CertReqMessage.
+	cr := gocmp.CertRequest{
+		CertReqID:    0,
+		CertTemplate: *tmpl,
 	}
+	crMsg := gocmp.CertReqMessage{CertReq: cr}
 
-	certTemplateDER, err := asn1.Marshal(struct {
-		Subject   asn1.RawValue
-		PublicKey asn1.RawValue
-	}{subjectField, pubKeyField})
-	if err != nil {
-		t.Fatalf("marshal CertTemplate: %v", err)
-	}
-	var rawCertTemplate asn1.RawValue
-	asn1.Unmarshal(certTemplateDER, &rawCertTemplate)
-
-	// Build CertRequest.
-	certReqDER, err := asn1.Marshal(struct {
-		CertReqId    int
-		CertTemplate asn1.RawValue
-	}{0, rawCertTemplate})
-	if err != nil {
-		t.Fatalf("marshal CertRequest: %v", err)
-	}
-	var rawCertReq asn1.RawValue
-	asn1.Unmarshal(certReqDER, &rawCertReq)
-
-	// CertReqMsg = SEQUENCE { CertRequest } (no PoP for this debug test).
-	certReqMsgDER, err := asn1.Marshal(struct {
-		CertReq asn1.RawValue
-	}{rawCertReq})
-	if err != nil {
-		t.Fatalf("marshal CertReqMsg: %v", err)
-	}
-	var rawCertReqMsg asn1.RawValue
-	asn1.Unmarshal(certReqMsgDER, &rawCertReqMsg)
-
-	// CertReqMessages = SEQUENCE OF CertReqMsg.
-	certReqMsgsDER, err := asn1.Marshal([]asn1.RawValue{rawCertReqMsg})
+	// Marshal as CertReqMessages (SEQUENCE OF CertReqMsg).
+	certReqMsgsDER, err := asn1.Marshal([]gocmp.CertReqMessage{crMsg})
 	if err != nil {
 		t.Fatalf("marshal CertReqMessages: %v", err)
 	}
-	var rawCertReqMsgs asn1.RawValue
-	asn1.Unmarshal(certReqMsgsDER, &rawCertReqMsgs)
 
 	// Wrap in PKIBody CHOICE context tag.
 	// With EXPLICIT TAGS, the body.Bytes must be the full CertReqMessages DER.
