@@ -152,15 +152,33 @@ func parseCertTemplate(data []byte) (*x509.Certificate, error) {
 		}
 
 		switch field.Tag {
-		case 5: // subject [5] Name (EXPLICIT → field.Bytes is the Name SEQUENCE)
+		case 5: // subject [5] Name (IMPLICIT → field.Bytes is the inner content of the Name SEQUENCE)
+			// Re-wrap the inner bytes with a SEQUENCE tag to reconstruct the full Name DER.
+			nameDER, err := asn1.Marshal(asn1.RawValue{
+				Tag:        asn1.TagSequence,
+				IsCompound: true,
+				Bytes:      field.Bytes,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("re-wrap subject: %w", err)
+			}
 			var rdns pkix.RDNSequence
-			if _, err := asn1.Unmarshal(field.Bytes, &rdns); err != nil {
+			if _, err := asn1.Unmarshal(nameDER, &rdns); err != nil {
 				return nil, fmt.Errorf("parse subject: %w", err)
 			}
 			tmpl.Subject.FillFromRDNSequence(&rdns)
 
-		case 6: // publicKey [6] SubjectPublicKeyInfo
-			pub, err := x509.ParsePKIXPublicKey(field.Bytes)
+		case 6: // publicKey [6] SubjectPublicKeyInfo (IMPLICIT → field.Bytes is the inner content of the SPKI SEQUENCE)
+			// Re-wrap the inner bytes with a SEQUENCE tag to reconstruct the full SPKI DER.
+			spkiDER, err := asn1.Marshal(asn1.RawValue{
+				Tag:        asn1.TagSequence,
+				IsCompound: true,
+				Bytes:      field.Bytes,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("re-wrap publicKey: %w", err)
+			}
+			pub, err := x509.ParsePKIXPublicKey(spkiDER)
 			if err != nil {
 				return nil, fmt.Errorf("parse publicKey: %w", err)
 			}

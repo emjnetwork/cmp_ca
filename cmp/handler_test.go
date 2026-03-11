@@ -50,25 +50,33 @@ func buildCertReqMessage(t *testing.T, pub *rsa.PublicKey, subject pkix.Name, bo
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
 	}
 
-	// Build CertTemplate with subject [5] and publicKey [6] (EXPLICIT context tags).
-	// With CMP EXPLICIT TAGS default, [N] EXPLICIT { T } means:
-	//   outer [N] CONSTRUCTED wrapper, Bytes = full DER of T (including T's own tag+length).
+	// Build CertTemplate with subject [5] and publicKey [6].
+	// RFC 4211 (CRMF) uses IMPLICIT TAGS: the context tag replaces the SEQUENCE tag,
+	// so Bytes must contain only the inner content of the SEQUENCE (no outer tag+length).
 	subjectDER, err := asn1.Marshal(subject.ToRDNSequence())
 	if err != nil {
 		t.Fatalf("marshal subject: %v", err)
+	}
+	var nameRaw asn1.RawValue
+	if _, err := asn1.Unmarshal(subjectDER, &nameRaw); err != nil {
+		t.Fatalf("unmarshal Name: %v", err)
 	}
 	subjectField := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
 		Tag:        5,
 		IsCompound: true,
-		Bytes:      subjectDER, // full Name SEQUENCE DER
+		Bytes:      nameRaw.Bytes, // inner content only (IMPLICIT: replaces SEQUENCE tag)
 	}
 
+	var spkiRaw asn1.RawValue
+	if _, err := asn1.Unmarshal(spkiDER, &spkiRaw); err != nil {
+		t.Fatalf("unmarshal SPKI: %v", err)
+	}
 	pubKeyField := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
 		Tag:        6,
 		IsCompound: true,
-		Bytes:      spkiDER, // full SubjectPublicKeyInfo SEQUENCE DER
+		Bytes:      spkiRaw.Bytes, // inner content only (IMPLICIT: replaces SEQUENCE tag)
 	}
 
 	certTemplateDER, err := asn1.Marshal(struct {
