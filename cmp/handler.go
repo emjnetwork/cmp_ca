@@ -152,17 +152,51 @@ func parseCertTemplate(data []byte) (*x509.Certificate, error) {
 		}
 
 		switch field.Tag {
-		case 5: // subject [5] Name (EXPLICIT → field.Bytes is the Name SEQUENCE)
+		case 5: // subject [5] Name
+			// RFC 4211 (CRMF) uses IMPLICIT TAGS: [5] replaces the SEQUENCE tag of
+			// Name, so field.Bytes contains the inner SET elements directly (starts
+			// with 0x31).  With EXPLICIT tagging (Go test builder), field.Bytes is
+			// the full Name SEQUENCE DER (starts with 0x30).
+			data := field.Bytes
+			if len(data) == 0 {
+				break
+			}
+			if data[0] != 0x30 {
+				// IMPLICIT: re-wrap inner content as a SEQUENCE to form a valid Name.
+				wrapped, err := asn1.Marshal(asn1.RawValue{
+					Tag:        asn1.TagSequence,
+					IsCompound: true,
+					Bytes:      data,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("re-wrap subject: %w", err)
+				}
+				data = wrapped
+			}
 			var rdns pkix.RDNSequence
-			if _, err := asn1.Unmarshal(field.Bytes, &rdns); err != nil {
+			if _, err := asn1.Unmarshal(data, &rdns); err != nil {
 				return nil, fmt.Errorf("parse subject: %w", err)
 			}
 			tmpl.Subject.FillFromRDNSequence(&rdns)
 
 		case 6: // publicKey [6] SubjectPublicKeyInfo
+			// Try EXPLICIT first: field.Bytes is the full SPKI SEQUENCE DER.
+			// If that fails, assume IMPLICIT: field.Bytes is the inner content of
+			// the SPKI SEQUENCE (AlgorithmIdentifier + BIT STRING), and re-wrap.
 			pub, err := x509.ParsePKIXPublicKey(field.Bytes)
 			if err != nil {
-				return nil, fmt.Errorf("parse publicKey: %w", err)
+				wrapped, wrapErr := asn1.Marshal(asn1.RawValue{
+					Tag:        asn1.TagSequence,
+					IsCompound: true,
+					Bytes:      field.Bytes,
+				})
+				if wrapErr != nil {
+					return nil, fmt.Errorf("re-wrap publicKey: %w", wrapErr)
+				}
+				pub, err = x509.ParsePKIXPublicKey(wrapped)
+				if err != nil {
+					return nil, fmt.Errorf("parse publicKey: %w", err)
+				}
 			}
 			tmpl.PublicKey = pub
 

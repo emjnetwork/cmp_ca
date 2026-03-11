@@ -327,6 +327,172 @@ func TestHandlerIR(t *testing.T) {
 	os.WriteFile("ip.der", respDER.Bytes(), 0644)
 }
 
+// buildIRMessageImplicit builds an IR PKIMessage where the CertTemplate uses
+// IMPLICIT context tags (as required by RFC 4211 CRMF), matching real clients
+// such as OpenSSL and libcmp.  With IMPLICIT tagging the context tag [N]
+// replaces the universal tag of the encoded type, so:
+//   - [5] Name: the outer SEQUENCE tag is stripped; field.Bytes = inner SET elements.
+//   - [6] SubjectPublicKeyInfo: the outer SEQUENCE tag is stripped; field.Bytes = AlgId + BitString.
+func buildIRMessageImplicit(t *testing.T, pub *rsa.PublicKey, subject pkix.Name) []byte {
+	t.Helper()
+
+	// Encode SPKI and strip outer SEQUENCE tag → get inner content only.
+	spkiDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	var spkiRaw asn1.RawValue
+	if _, err := asn1.Unmarshal(spkiDER, &spkiRaw); err != nil {
+		t.Fatalf("unmarshal SPKI: %v", err)
+	}
+	// spkiRaw.Bytes is the inner content of the SPKI SEQUENCE (IMPLICIT tagging).
+
+	// Encode Name and strip outer SEQUENCE tag → get inner SET elements only.
+	subjectDER, err := asn1.Marshal(subject.ToRDNSequence())
+	if err != nil {
+		t.Fatalf("marshal subject: %v", err)
+	}
+	var subjectRaw asn1.RawValue
+	if _, err := asn1.Unmarshal(subjectDER, &subjectRaw); err != nil {
+		t.Fatalf("unmarshal subject: %v", err)
+	}
+	// subjectRaw.Bytes is the inner content of the Name SEQUENCE (IMPLICIT tagging).
+
+	subjectField := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        5,
+		IsCompound: true,
+		Bytes:      subjectRaw.Bytes, // inner SET elements, NOT the full SEQUENCE DER
+	}
+
+	pubKeyField := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        6,
+		IsCompound: true,
+		Bytes:      spkiRaw.Bytes, // inner AlgId+BitString, NOT the full SEQUENCE DER
+	}
+
+	certTemplateDER, err := asn1.Marshal(struct {
+		Subject   asn1.RawValue
+		PublicKey asn1.RawValue
+	}{subjectField, pubKeyField})
+	if err != nil {
+		t.Fatalf("marshal CertTemplate: %v", err)
+	}
+	var rawCertTemplate asn1.RawValue
+	if _, err := asn1.Unmarshal(certTemplateDER, &rawCertTemplate); err != nil {
+		t.Fatalf("unmarshal CertTemplate: %v", err)
+	}
+
+	certReqDER, err := asn1.Marshal(struct {
+		CertReqId    int
+		CertTemplate asn1.RawValue
+	}{0, rawCertTemplate})
+	if err != nil {
+		t.Fatalf("marshal CertRequest: %v", err)
+	}
+	var rawCertReq asn1.RawValue
+	if _, err := asn1.Unmarshal(certReqDER, &rawCertReq); err != nil {
+		t.Fatalf("unmarshal CertReq: %v", err)
+	}
+
+	certReqMsgDER, err := asn1.Marshal(struct {
+		CertReq asn1.RawValue
+	}{rawCertReq})
+	if err != nil {
+		t.Fatalf("marshal CertReqMsg: %v", err)
+	}
+	var rawCertReqMsg asn1.RawValue
+	if _, err := asn1.Unmarshal(certReqMsgDER, &rawCertReqMsg); err != nil {
+		t.Fatalf("unmarshal CertReqMsg: %v", err)
+	}
+
+	certReqMsgsDER, err := asn1.Marshal([]asn1.RawValue{rawCertReqMsg})
+	if err != nil {
+		t.Fatalf("marshal CertReqMessages: %v", err)
+	}
+
+	body := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        cmp.BodyIR,
+		IsCompound: true,
+		Bytes:      certReqMsgsDER,
+	}
+
+	transactionID := make([]byte, 16)
+	rand.Read(transactionID)
+	senderNonce := make([]byte, 16)
+	rand.Read(senderNonce)
+
+	emptyDN := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      []byte{0x30, 0x00},
+	}
+
+	type headerType struct {
+		PVNO          int
+		Sender        asn1.RawValue `asn1:"omitempty"`
+		Recipient     asn1.RawValue `asn1:"omitempty"`
+		TransactionID []byte        `asn1:"optional,explicit,tag:4"`
+		SenderNonce   []byte        `asn1:"optional,explicit,tag:5"`
+	}
+	type msgType struct {
+		Header headerType
+		Body   asn1.RawValue
+	}
+	der, err := asn1.Marshal(msgType{
+		Header: headerType{
+			PVNO:          2,
+			Sender:        emptyDN,
+			Recipient:     emptyDN,
+			TransactionID: transactionID,
+			SenderNonce:   senderNonce,
+		},
+		Body: body,
+	})
+	if err != nil {
+		t.Fatalf("marshal PKIMessage: %v", err)
+	}
+	return der
+}
+
+func TestHandlerIR_ImplicitTags(t *testing.T) {
+	h := newTestHandler(t)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reqDER := buildIRMessageImplicit(t, &key.PublicKey, pkix.Name{CommonName: "implicit.example.com"})
+
+	resp, err := http.Post(srv.URL, "application/pkixcmp", bytes.NewReader(reqDER))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("IR (implicit) status = %d, want 200", resp.StatusCode)
+	}
+
+	var respDER bytes.Buffer
+	respDER.ReadFrom(resp.Body)
+
+	cert := extractCertFromResponse(t, respDER.Bytes())
+
+	if cert.Subject.CommonName != "implicit.example.com" {
+		t.Errorf("issued CN = %q, want %q", cert.Subject.CommonName, "implicit.example.com")
+	}
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: h.CA.CertPool()}); err != nil {
+		t.Errorf("certificate verification failed: %v", err)
+	}
+}
+
 func TestHandlerKUR(t *testing.T) {
 	h := newTestHandler(t)
 	srv := httptest.NewServer(h)
